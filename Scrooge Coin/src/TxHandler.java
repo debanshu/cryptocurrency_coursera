@@ -98,6 +98,17 @@ public class TxHandler {
                 .filter( tx -> isValidTx(tx))
                 .map( tx -> {
                     //update UTXOPool ledger
+                    
+                    //remove all inputs from the ledger, since they are not 'spent'
+                    for(Transaction.Input inp:tx.getInputs()) {
+                        ledger.removeUTXO(new UTXO(inp.prevTxHash,inp.outputIndex));
+                    }
+                    
+                    //add all outputs to the ledger, since they are 'unspent'
+                    for(int idx= 0; idx < tx.numOutputs(); idx++) { //get output indexes
+                        Transaction.Output o = tx.getOutput(idx);
+                        ledger.addUTXO(new UTXO(tx.getHash(), idx), o);
+                    }
                     return tx;
                 })
                 .toArray(Transaction[]::new);
