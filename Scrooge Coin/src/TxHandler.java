@@ -1,5 +1,10 @@
 
 import java.security.PublicKey;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class TxHandler {
     
@@ -26,32 +31,57 @@ public class TxHandler {
      */
     public boolean isValidTx(Transaction tx) {
         // IMPLEMENT THIS
-        // (1) all outputs claimed by {@code tx} are in the current UTXO pool
+        Set<UTXO> UTXOSet = new HashSet<>();
+        double inputSum = 0; 
         
-        for(int idx= 0; idx < tx.numOutputs(); idx++) { //get output indexes
+        // (1) all outputs claimed by {@code tx} are in the current UTXO pool        
+        // basically check all inputs must be in the UTXOPool
+        // so that they can be claimed in this tx
+        for(int idx= 0; idx < tx.numInputs(); idx++) { //get input indices
+            //get input at idx
+            Transaction.Input inp = tx.getInput(idx);
             // create UTXO temporaily with tx hash and index
-            UTXO temp = new UTXO(tx.getHash(),idx);
+            UTXO temp = new UTXO(inp.prevTxHash,inp.outputIndex);
+            
             //check if UTXO exist in pool, else return false
             if(!ledger.contains(temp))
                 return false;
-        }
-        
-        // (2) the signatures on each input of {@code tx} are valid
-        for(int idx= 0; idx < tx.numInputs(); idx++) { //get input indexes
+            
+            // (2) the signatures on each input of {@code tx} are valid
+            //since it exists check if the signature is valid
             //get raw data
             byte[] msg = tx.getRawDataToSign(idx);
             //get signature
-            byte[] sig = tx.getInput(idx).signature;
+            byte[] sig = inp.signature;
             //get public key
-            PublicKey pk = tx.getOutput(tx.getInput(idx).outputIndex).address;
+            //go into UTXOPool and get the output
+            PublicKey pk = ledger.getTxOutput(temp).address;
             //verify signatures, if not verified return false
             if(!Crypto.verifySignature(pk, msg, sig))
-                return false;            
-        }
+                return false;  
+            
+            // (3) no UTXO is claimed multiple times by {@code tx}
+            // store the utxo in a set and check if it exists
+            if(UTXOSet.contains(temp))
+                return false;
+            UTXOSet.add(temp);
+            
+            // (5) the sum of {@code tx}s input values is greater than or equal to the sum of its output
+            // sum all the inputSum
+            inputSum += ledger.getTxOutput(temp).value;
+        }        
+       
+        double outputSum = 0;
+        // (4) all of {@code tx}s output values are non-negative
+        for(Transaction.Output o:tx.getOutputs()) {
+            if(o.value < 0)
+                return false;
+            outputSum += o.value;
+        }       
         
-        // (3) no UTXO is claimed multiple times by {@code tx}
-        
-        
+        // (5) the sum of {@code tx}s input values is greater than or equal to the sum of its output               
+        if(!(inputSum >= outputSum))
+            return false;
         
         //all checks passed
         return true;
@@ -64,6 +94,15 @@ public class TxHandler {
      */
     public Transaction[] handleTxs(Transaction[] possibleTxs) {
         // IMPLEMENT THIS
+        return Arrays.stream(possibleTxs)
+                .filter( tx -> isValidTx(tx))
+                .map( tx -> {
+                    //update UTXOPool ledger
+                    return tx;
+                })
+                .toArray(Transaction[]::new);
+                       
+                
     }
 
 }
