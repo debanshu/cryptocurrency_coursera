@@ -1,4 +1,9 @@
+
+import java.security.PublicKey;
+
 public class TxHandler {
+    
+    public UTXOPool ledger;
 
     /**
      * Creates a public ledger whose current UTXOPool (collection of unspent transaction outputs) is
@@ -7,6 +12,7 @@ public class TxHandler {
      */
     public TxHandler(UTXOPool utxoPool) {
         // IMPLEMENT THIS
+        this.ledger = new UTXOPool(utxoPool);
     }
 
     /**
@@ -20,6 +26,35 @@ public class TxHandler {
      */
     public boolean isValidTx(Transaction tx) {
         // IMPLEMENT THIS
+        // (1) all outputs claimed by {@code tx} are in the current UTXO pool
+        
+        for(int idx= 0; idx < tx.numOutputs(); idx++) { //get output indexes
+            // create UTXO temporaily with tx hash and index
+            UTXO temp = new UTXO(tx.getHash(),idx);
+            //check if UTXO exist in pool, else return false
+            if(!ledger.contains(temp))
+                return false;
+        }
+        
+        // (2) the signatures on each input of {@code tx} are valid
+        for(int idx= 0; idx < tx.numInputs(); idx++) { //get input indexes
+            //get raw data
+            byte[] msg = tx.getRawDataToSign(idx);
+            //get signature
+            byte[] sig = tx.getInput(idx).signature;
+            //get public key
+            PublicKey pk = tx.getOutput(tx.getInput(idx).outputIndex).address;
+            //verify signatures, if not verified return false
+            if(!Crypto.verifySignature(pk, msg, sig))
+                return false;            
+        }
+        
+        // (3) no UTXO is claimed multiple times by {@code tx}
+        
+        
+        
+        //all checks passed
+        return true;
     }
 
     /**
