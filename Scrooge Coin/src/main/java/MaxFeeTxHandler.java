@@ -196,11 +196,11 @@ public class MaxFeeTxHandler {
 //        }
 //    }
     
-    public <T> void print(T[] arr) {
+    private <T> void print(T[] arr) {
         System.out.println(Arrays.toString(arr));
     }
     
-    public <T> List<T> rotate(T[] arr) {
+    private <T> List<T> rotate(T[] arr) {
         List<T> lt =  Arrays.stream(arr).skip(1).collect(Collectors.toList());
         lt.add(arr[0]);
         return lt;
