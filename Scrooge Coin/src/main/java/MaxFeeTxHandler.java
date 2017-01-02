@@ -34,7 +34,10 @@ public class MaxFeeTxHandler {
      * (5) the sum of {@code tx}s input values is greater than or equal to the sum of its output
      *     values; and false otherwise.
      */
-    public boolean isValidTx(Transaction tx, UTXOPool ledger) {
+    public boolean isValidTx(Transaction tx) {
+        return isValidTx(tx, publicLedger);
+    }
+    private boolean isValidTx(Transaction tx, UTXOPool ledger) {
         // check all tests
         return (allInputsInPool(tx,ledger) && //valid inputs
                 allInputSignaturesValid(tx,ledger) && //valid signatures
@@ -51,29 +54,79 @@ public class MaxFeeTxHandler {
     public Transaction[] handleTxs(Transaction[] possibleTxs) {
         //MaxFeeTxHandler naive try
         //filter out invalid ones
-        possibleTxs = Arrays.stream(possibleTxs)
-                            .filter( tx -> isValidTx(tx, publicLedger))
-                            //.sorted((txa,txb) -> Double.compare(transactionFee(txb), transactionFee(txa)))
-                            //can also be done like this
-                            //.sorted(Comparator.comparingDouble(this::transactionFee).reversed())
-                            .toArray(Transaction[]::new);
+//        possibleTxs = Arrays.stream(possibleTxs)
+//                            .filter( tx -> isValidTx(tx, publicLedger))
+//                            //.sorted((txa,txb) -> Double.compare(transactionFee(txb), transactionFee(txa)))
+//                            //can also be done like this
+//                            //.sorted(Comparator.comparingDouble(this::transactionFee).reversed())
+//                            .toArray(Transaction[]::new);
+//        
+//        TxLedger finalLedger = knapSack(possibleTxs, possibleTxs.length, new TxLedger(publicLedger, new ArrayList<Transaction>()));
+//        publicLedger = finalLedger.ledger;
+//        return finalLedger.txs.stream().toArray(Transaction[]::new);
         
-        TxLedger finalLedger = knapSack(possibleTxs, possibleTxs.length, new TxLedger(publicLedger, new ArrayList<Transaction>()));
-        publicLedger = finalLedger.ledger;
-        return finalLedger.txs.stream().toArray(Transaction[]::new);
+        //init empty list of selected txs
+        ArrayList<Transaction> selectedTxs = new ArrayList<>();
+        //keep a copy of the ledger to make updates
+        UTXOPool currentLedger = new UTXOPool(publicLedger);
+        //dp approach for maxfee
+        //choose each transaction
+        for(Transaction tx:possibleTxs) {
+            //if transaction is valid add to selectedTxs
+            //it will always be a positive contribution to fee
+            //negative fee ruled out by validity check of transactionFees
+            if(isValidTx(tx, currentLedger)) {
+                selectedTxs.add(tx);
+                //update current ledger
+                updateCurrentPoolLedger(tx, currentLedger);
+            }
+            else if(!allInputsInPool(tx,currentLedger)) {
+                //check if invalid due to double spend of input earlier
+                //if it's input is used earlier then all input won't be in current ledger pool
+                
+                //check if we remove earlier transactions which were selected
+                //causing this to be double spent, and add this tx to set instead of them
+                //which will yield more fees
+                double feesWithoutCurTx = getTotalFees(selectedTxs);
+                //get new array list without txs conflicting with curTx due to double spent
+                ArrayList<Transaction> modTxs = removeConflictingTxs(tx, selectedTxs);
+                double feesWithCurTx = getTotalFees(modTxs);
+
+                //choose greater yield txs combination
+                if(feesWithCurTx > feesWithoutCurTx) {
+                    //reset selected txs
+                    selectedTxs = modTxs;
+                    selectedTxs.add(tx);
+                    //recalculate currentLedger with new selectedTxs
+                    currentLedger = recalculateLedger(selectedTxs);
+                }
+                //else slectedTxs remains as is, no changes
+            }
+        }
+        
+        //set updated publicLedger
+        publicLedger = currentLedger;
+        //return array of selected transactions
+        return selectedTxs.stream().toArray(Transaction[]::new);
           
     }
     
-    private double getTotalFees(Transaction[] txs, UTXOPool ledger) {
-        return Arrays.stream(txs)
-                .mapToDouble(tx -> transactionFee(tx, ledger))
+      
+    private double getTotalFees(List<Transaction> txs) {
+        return txs.stream()
+                .mapToDouble(tx -> transactionFee(tx, publicLedger))
                 .sum();
     }
     
-    private double getTotalFees(List<Transaction> txs, UTXOPool ledger) {
-        return txs.stream()
-                .mapToDouble(tx -> transactionFee(tx, ledger))
-                .sum();
+    private UTXOPool updateCurrentPoolLedger(Transaction tx, UTXOPool curLedger) {
+        //update UTXOPool ledger
+        //remove all inputs from the ledger, since they are not 'spent'
+        tx.getInputs().forEach(inp -> curLedger.removeUTXO(new UTXO(inp.prevTxHash, inp.outputIndex)));
+
+        //add all outputs to the ledger, since they are 'unspent'
+        IntStream.range(0, tx.numOutputs())
+                .forEach(idx -> curLedger.addUTXO(new UTXO(tx.getHash(), idx), tx.getOutput(idx)));
+        return curLedger;
     }
            
 //    private void updatePoolLedger(Transaction tx, UTXOPool ledger) {
@@ -87,17 +140,17 @@ public class MaxFeeTxHandler {
 //        
 //    }
     
-    private UTXOPool updatePoolLedger(Transaction tx, UTXOPool oldLedger) {
-        UTXOPool ledger = new UTXOPool(oldLedger);
-        //update UTXOPool ledger
-        //remove all inputs from the ledger, since they are not 'spent'
-        tx.getInputs().forEach(inp -> ledger.removeUTXO(new UTXO(inp.prevTxHash, inp.outputIndex)));
-
-        //add all outputs to the ledger, since they are 'unspent'
-        IntStream.range(0, tx.numOutputs())
-                .forEach(idx -> ledger.addUTXO(new UTXO(tx.getHash(), idx), tx.getOutput(idx)));
-        return ledger;
-    }
+//    private UTXOPool updatePoolLedger(Transaction tx, UTXOPool oldLedger) {
+//        UTXOPool ledger = new UTXOPool(oldLedger);
+//        //update UTXOPool ledger
+//        //remove all inputs from the ledger, since they are not 'spent'
+//        tx.getInputs().forEach(inp -> ledger.removeUTXO(new UTXO(inp.prevTxHash, inp.outputIndex)));
+//
+//        //add all outputs to the ledger, since they are 'unspent'
+//        IntStream.range(0, tx.numOutputs())
+//                .forEach(idx -> ledger.addUTXO(new UTXO(tx.getHash(), idx), tx.getOutput(idx)));
+//        return ledger;
+//    }
 
     private boolean allInputsInPool(Transaction tx, UTXOPool ledger) {
         // (1) all outputs claimed by {@code tx} are in the current UTXO pool        
@@ -156,37 +209,73 @@ public class MaxFeeTxHandler {
         return inputSum - outputSum;
     }
 
-    private TxLedger knapSack(Transaction[] possibleTxs, int n, TxLedger txLedger) {
-        if(n == 0)
-            return txLedger;
-        
-        if(!isValidTx(possibleTxs[n-1], txLedger.ledger))
-            return knapSack(possibleTxs, n-1, txLedger);
-        
-        ArrayList<Transaction> newTxs = new ArrayList<>(txLedger.txs);
-        newTxs.add(possibleTxs[n-1]);
-        UTXOPool newLedger = updatePoolLedger(possibleTxs[n-1], txLedger.ledger);
-        TxLedger newTxLedger = new TxLedger(newLedger, newTxs);
-        
-        
-        return maxFees( knapSack(possibleTxs, n-1, newTxLedger),knapSack(possibleTxs, n-1, txLedger));
-    }
+//    private TxLedger knapSack(Transaction[] possibleTxs, int n, TxLedger txLedger) {
+//        if(n == 0)
+//            return txLedger;
+//        
+//        if(!isValidTx(possibleTxs[n-1], txLedger.ledger))
+//            return knapSack(possibleTxs, n-1, txLedger);
+//        
+//        ArrayList<Transaction> newTxs = new ArrayList<>(txLedger.txs);
+//        newTxs.add(possibleTxs[n-1]);
+//        UTXOPool newLedger = updatePoolLedger(possibleTxs[n-1], txLedger.ledger);
+//        TxLedger newTxLedger = new TxLedger(newLedger, newTxs);
+//        
+//        
+//        return maxFees( knapSack(possibleTxs, n-1, newTxLedger),knapSack(possibleTxs, n-1, txLedger));
+//    }
+//
+//    private TxLedger maxFees(TxLedger tx1, TxLedger tx2) {
+//        if(getTotalFees(tx1.txs) >= getTotalFees(tx2.txs))
+//            return tx1;
+//        return tx2;
+//    }
 
-    private TxLedger maxFees(TxLedger tx1, TxLedger tx2) {
-        if(getTotalFees(tx1.txs, publicLedger) > getTotalFees(tx2.txs, publicLedger))
-            return tx1;
-        return tx2;
-    }
-
-    private class TxLedger {
-        public ArrayList<Transaction> txs;
-        public UTXOPool ledger;
-
-        public TxLedger(UTXOPool ledger, ArrayList<Transaction> txs) {
-            this.txs = txs;
-            this.ledger = ledger;
+    private ArrayList<Transaction> removeConflictingTxs(Transaction tx, ArrayList<Transaction> selectedTxs) {
+        //make defensive copy of selectedTxs
+        ArrayList<Transaction> modTxs = new ArrayList<>(selectedTxs);
+        
+        //go through all inputs in tx
+        for(Transaction.Input inp:tx.getInputs()) {
+            UTXO curInp = new UTXO(inp.prevTxHash,inp.outputIndex);
+            //find if input also exists in any selcted tx
+            int foundIdx = -1;
+            for(int idx =0; idx<selectedTxs.size(); idx++) {
+                Transaction cur = selectedTxs.get(idx);
+                for(Transaction.Input nestedInp:cur.getInputs()) {
+                    if(curInp.compareTo(new UTXO(nestedInp.prevTxHash,nestedInp.outputIndex)) == 0) {
+                        foundIdx = idx;
+                        break;
+                    }
+                }
+                if(foundIdx > -1)
+                    break;
+            }
+            //if input found in any tx, delete from selected tx
+            if(foundIdx > -1)
+                selectedTxs.remove(foundIdx);
         }
+        
+        return modTxs;
     }
+
+    private UTXOPool recalculateLedger(ArrayList<Transaction> selectedTxs) {
+        //recalculate ledger from publicLedger
+        //make defensive copy of public ledger
+        UTXOPool currentLedger = new UTXOPool(publicLedger);
+        selectedTxs.forEach(tx -> updateCurrentPoolLedger(tx,currentLedger));
+        return currentLedger;
+    }
+
+//    private class TxLedger {
+//        public ArrayList<Transaction> txs;
+//        public UTXOPool ledger;
+//
+//        public TxLedger(UTXOPool ledger, ArrayList<Transaction> txs) {
+//            this.txs = txs;
+//            this.ledger = ledger;
+//        }
+//    }
     
 //    public static void main(String[] args) {
 //        Integer[] vals = {1,2,3,4,5};
@@ -196,15 +285,15 @@ public class MaxFeeTxHandler {
 //        }
 //    }
     
-    private <T> void print(T[] arr) {
-        System.out.println(Arrays.toString(arr));
-    }
-    
-    private <T> List<T> rotate(T[] arr) {
-        List<T> lt =  Arrays.stream(arr).skip(1).collect(Collectors.toList());
-        lt.add(arr[0]);
-        return lt;
-    } 
+//    private <T> void print(T[] arr) {
+//        System.out.println(Arrays.toString(arr));
+//    }
+//    
+//    private <T> List<T> rotate(T[] arr) {
+//        List<T> lt =  Arrays.stream(arr).skip(1).collect(Collectors.toList());
+//        lt.add(arr[0]);
+//        return lt;
+//    } 
     
     
 }
