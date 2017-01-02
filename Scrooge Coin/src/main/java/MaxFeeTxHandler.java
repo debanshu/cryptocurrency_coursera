@@ -90,13 +90,13 @@ public class MaxFeeTxHandler {
                 double feesWithoutCurTx = getTotalFees(selectedTxs);
                 //get new array list without txs conflicting with curTx due to double spent
                 ArrayList<Transaction> modTxs = removeConflictingTxs(tx, selectedTxs);
+                modTxs.add(tx);
                 double feesWithCurTx = getTotalFees(modTxs);
 
                 //choose greater yield txs combination
                 if(feesWithCurTx > feesWithoutCurTx) {
                     //reset selected txs
                     selectedTxs = modTxs;
-                    selectedTxs.add(tx);
                     //recalculate currentLedger with new selectedTxs
                     currentLedger = recalculateLedger(selectedTxs);
                 }
@@ -240,8 +240,8 @@ public class MaxFeeTxHandler {
             UTXO curInp = new UTXO(inp.prevTxHash,inp.outputIndex);
             //find if input also exists in any selcted tx
             int foundIdx = -1;
-            for(int idx =0; idx<selectedTxs.size(); idx++) {
-                Transaction cur = selectedTxs.get(idx);
+            for(int idx =0; idx < modTxs.size(); idx++) {
+                Transaction cur = modTxs.get(idx);
                 for(Transaction.Input nestedInp:cur.getInputs()) {
                     if(curInp.compareTo(new UTXO(nestedInp.prevTxHash,nestedInp.outputIndex)) == 0) {
                         foundIdx = idx;
@@ -253,7 +253,7 @@ public class MaxFeeTxHandler {
             }
             //if input found in any tx, delete from selected tx
             if(foundIdx > -1)
-                selectedTxs.remove(foundIdx);
+                modTxs.remove(foundIdx);
         }
         
         return modTxs;
