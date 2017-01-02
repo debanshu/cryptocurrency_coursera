@@ -43,7 +43,7 @@ public class MaxFeeTxHandler {
                 allInputSignaturesValid(tx,ledger) && //valid signatures
                 noInputsClaimedMultiple(tx) && //no double spending of inputs
                 allOutputsNonNegative(tx) && //valid outputs
-                (transactionFee(tx, ledger) >= 0.0)); //proper transaction
+                (transactionFee(tx) >= 0.0)); //proper transaction
     }
 
     /**
@@ -114,7 +114,7 @@ public class MaxFeeTxHandler {
       
     private double getTotalFees(List<Transaction> txs) {
         return txs.stream()
-                .mapToDouble(tx -> transactionFee(tx, publicLedger))
+                .mapToDouble(tx -> transactionFee(tx))
                 .sum();
     }
     
@@ -197,11 +197,11 @@ public class MaxFeeTxHandler {
                 .allMatch(o -> o.value>=0); //check if value non-nagtive
     }
 
-    private double transactionFee(Transaction tx, UTXOPool ledger) {
+    private double transactionFee(Transaction tx) {
         // (5) the sum of {@code tx}s input values is greater than or equal to the sum of its output
         // sum all the inputSum
         double inputSum = tx.getInputs().stream()
-                .mapToDouble(inp -> ledger.getTxOutput(new UTXO(inp.prevTxHash,inp.outputIndex)).value)
+                .mapToDouble(inp -> publicLedger.getTxOutput(new UTXO(inp.prevTxHash,inp.outputIndex)).value)
                 .sum();
         double outputSum = tx.getOutputs().stream()
                 .mapToDouble(o -> o.value)
