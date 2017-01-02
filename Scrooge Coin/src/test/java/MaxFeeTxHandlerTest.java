@@ -12,6 +12,9 @@ import java.security.SecureRandom;
 import java.security.Security;
 import java.security.Signature;
 import java.security.SignatureException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.IntStream;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import static org.junit.Assert.*;
@@ -21,12 +24,54 @@ import static org.junit.Assert.*;
  * @author Debanshu
  */
 public class MaxFeeTxHandlerTest {
-    
+
     public static MaxFeeTxHandler txHandler;
-    
+    public static Transaction[] txs;
+    public static Signature signature;
+
+    private static Transaction createTransaction(
+            int[] inpIndexes,
+            Transaction[] inpTransactions,
+            PrivateKey[] privateKeys,
+            double[] outValues,
+            PublicKey[] publicKeys) {
+        //init new transaction
+        Transaction tx = new Transaction();
+        
+        //add the transaction inputs
+        IntStream.range(0, inpIndexes.length)
+                .forEach(idx -> {
+                    tx.addInput(inpTransactions[idx].getHash(), inpIndexes[idx]);
+                });
+
+        // add the transaction outputs
+        IntStream.range(0, outValues.length)
+                .forEach(idx -> {
+                    tx.addOutput(outValues[idx], publicKeys[idx]);
+                });
+        
+        //sign the input indexes with private keys
+        IntStream.range(0, inpIndexes.length)
+                .forEach(idx -> {
+                    try {
+                        signature.initSign(privateKeys[idx]);
+                        signature.update(tx.getRawDataToSign(idx));
+                        tx.addSignature(signature.sign(), idx);
+                    } catch (InvalidKeyException ex) {
+                        Logger.getLogger(MaxFeeTxHandlerTest.class.getName()).log(Level.SEVERE, null, ex);
+                    } catch (SignatureException ex) {
+                        Logger.getLogger(MaxFeeTxHandlerTest.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                });
+
+        //finalize and return transaction
+        tx.finalize();
+        return tx;
+    }
+
     public MaxFeeTxHandlerTest() {
     }
-    
+
     @BeforeClass
     public static void setUpClass() throws InvalidKeyException, SignatureException, NoSuchAlgorithmException, NoSuchProviderException {
         // Crypto setup
@@ -50,51 +95,45 @@ public class MaxFeeTxHandlerTest {
         // Generating a root transaction tx out of thin air, so that Scrooge owns a coin of value 10
         // By thin air I mean that this tx will not be validated, I just need it to get a proper Transaction.Output
         // which I then can put in the UTXOPool, which will be passed to the TXHandler
-        Transaction tx = new Transaction();
-        tx.addOutput(10, public_key_scrooge);
+        Transaction rootTransaction = new Transaction();
+        rootTransaction.addOutput(10, public_key_scrooge);
 
         // that value has no meaning, but tx.getRawDataToSign(0) will access in.prevTxHash;
         byte[] initialHash = BigInteger.valueOf(1695609641).toByteArray();
-        tx.addInput(initialHash, 0);
+        rootTransaction.addInput(initialHash, 0);
 
-        Signature signature = Signature.getInstance("SHA256withRSA");
+        signature = Signature.getInstance("SHA256withRSA");
         signature.initSign(private_key_scrooge);
-        signature.update(tx.getRawDataToSign(0));
+        signature.update(rootTransaction.getRawDataToSign(0));
         byte[] sig = signature.sign();
 
-        tx.addSignature(sig, 0);
-        tx.finalize();
+        rootTransaction.addSignature(sig, 0);
+        rootTransaction.finalize();
         // END - ROOT TRANSACTION
 
         // The transaction output of the root transaction is unspent output
         UTXOPool utxoPool = new UTXOPool();
-        UTXO utxo = new UTXO(tx.getHash(),0);
-        utxoPool.addUTXO(utxo, tx.getOutput(0));
+        UTXO utxo = new UTXO(rootTransaction.getHash(), 0);
+        utxoPool.addUTXO(utxo, rootTransaction.getOutput(0));
 
         // START - PROPER TRANSACTION
-        Transaction tx2 = new Transaction();
-
-        // the Transaction.Output of tx at position 0 has a value of 10
-        tx2.addInput(tx.getHash(), 0);
-
-        // I split the coin of value 10 into 3 coins and send all of them for simplicity to the same address (Alice)
-        tx2.addOutput(5, public_key_alice);
-        tx2.addOutput(3, public_key_alice);
-        tx2.addOutput(2, public_key_alice);
-
-        // There is only one (at position 0) Transaction.Input in tx2
-        // and it contains the coin from Scrooge, therefore I have to sign with the private key from Scrooge
-        signature.initSign(private_key_scrooge);
-        signature.update(tx2.getRawDataToSign(0));
-        sig = signature.sign();
-        tx2.addSignature(sig, 0);
-        tx2.finalize();
+        Transaction tx1 = createTransaction(new int[]{0},
+                new Transaction[]{rootTransaction},
+                new PrivateKey[]{private_key_scrooge},
+                new double[]{5, 3, 1},
+                new PublicKey[]{public_key_alice, public_key_alice, public_key_alice});
+        
+        Transaction tx2 = createTransaction(new int[]{0},
+                new Transaction[]{rootTransaction},
+                new PrivateKey[]{private_key_scrooge},
+                new double[]{4, 3, 1},
+                new PublicKey[]{public_key_alice, public_key_alice, public_key_alice});
 
         // remember that the utxoPool contains a single unspent Transaction.Output which is the coin from Scrooge
         txHandler = new MaxFeeTxHandler(utxoPool);
+        txs = new Transaction[]{tx1,tx2};
     }
-    
-    
+
     @AfterClass
     public static void tearDownClass() {
     }
@@ -104,15 +143,7 @@ public class MaxFeeTxHandlerTest {
      */
     @org.junit.Test
     public void testIsValidTx() {
-        System.out.println("isValidTx");
-        Transaction tx = null;
-        UTXOPool ledger = null;
-        MaxFeeTxHandler instance = null;
-        boolean expResult = false;
-        boolean result = instance.isValidTx(tx, ledger);
-        assertEquals(expResult, result);
-        // TODO review the generated test code and remove the default call to fail.
-        fail("The test case is a prototype.");
+        assertEquals(true, txHandler.isValidTx(txs[0]));
     }
 
     /**
@@ -120,14 +151,9 @@ public class MaxFeeTxHandlerTest {
      */
     @org.junit.Test
     public void testHandleTxs() {
-        System.out.println("handleTxs");
-        Transaction[] possibleTxs = null;
-        MaxFeeTxHandler instance = null;
-        Transaction[] expResult = null;
-        Transaction[] result = instance.handleTxs(possibleTxs);
+        Transaction[] expResult = new Transaction[]{txs[1]};
+        Transaction[] result = txHandler.handleTxs(txs);
         assertArrayEquals(expResult, result);
-        // TODO review the generated test code and remove the default call to fail.
-        fail("The test case is a prototype.");
     }
-    
+
 }
