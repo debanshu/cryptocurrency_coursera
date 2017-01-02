@@ -43,7 +43,7 @@ public class MaxFeeTxHandler {
                 allInputSignaturesValid(tx,ledger) && //valid signatures
                 noInputsClaimedMultiple(tx) && //no double spending of inputs
                 allOutputsNonNegative(tx) && //valid outputs
-                (transactionFee(tx) >= 0.0)); //proper transaction
+                (transactionFee(tx, ledger) >= 0.0)); //proper transaction
     }
 
     /**
@@ -66,7 +66,7 @@ public class MaxFeeTxHandler {
 //        return finalLedger.txs.stream().toArray(Transaction[]::new);
         
         //init empty list of selected txs
-        ArrayList<Transaction> selectedTxs = new ArrayList<>();
+        ArrayList<TxWithValue> selectedTxs = new ArrayList<>();
         //keep a copy of the ledger to make updates
         UTXOPool currentLedger = new UTXOPool(publicLedger);
         //dp approach for maxfee
@@ -76,7 +76,7 @@ public class MaxFeeTxHandler {
             //it will always be a positive contribution to fee
             //negative fee ruled out by validity check of transactionFees
             if(isValidTx(tx, currentLedger)) {
-                selectedTxs.add(tx);
+                selectedTxs.add(new TxWithValue(tx,transactionFee(tx,currentLedger)));
                 //update current ledger
                 updateCurrentPoolLedger(tx, currentLedger);
             }
@@ -89,32 +89,46 @@ public class MaxFeeTxHandler {
                 //which will yield more fees
                 double feesWithoutCurTx = getTotalFees(selectedTxs);
                 //get new array list without txs conflicting with curTx due to double spent
-                ArrayList<Transaction> modTxs = removeConflictingTxs(tx, selectedTxs);
-                modTxs.add(tx);
-                double feesWithCurTx = getTotalFees(modTxs);
+                ArrayList<TxWithValue> modTxs = removeConflictingTxs(tx, selectedTxs);
+                //recalculate currentLedger with modTxs
+                UTXOPool tempLedger = recalculateLedger(modTxs);
+                //sanity check, since it should be valid now
+                if(isValidTx(tx, tempLedger)) {
+                    modTxs.add(new TxWithValue(tx,transactionFee(tx,tempLedger)));
+                    double feesWithCurTx = getTotalFees(modTxs);
 
-                //choose greater yield txs combination
-                if(feesWithCurTx > feesWithoutCurTx) {
-                    //reset selected txs
-                    selectedTxs = modTxs;
-                    //recalculate currentLedger with new selectedTxs
-                    currentLedger = recalculateLedger(selectedTxs);
+                    //choose greater yield txs combination
+                    if(feesWithCurTx > feesWithoutCurTx) {
+                        //reset selected txs
+                        selectedTxs = modTxs;
+                        //reset currentLedger
+                        currentLedger = tempLedger;
+                    }
+                    //else slectedTxs remains as is, no changes
                 }
-                //else slectedTxs remains as is, no changes
             }
         }
         
         //set updated publicLedger
         publicLedger = currentLedger;
         //return array of selected transactions
-        return selectedTxs.stream().toArray(Transaction[]::new);
+        return selectedTxs.stream().map( txV -> txV.tx).toArray(Transaction[]::new);
           
     }
     
+    private class TxWithValue {
+        public double txValue = 0;
+        public Transaction tx = null;
+
+        private TxWithValue(Transaction transc, double transactionFee) {
+            tx = transc;
+            txValue = transactionFee;
+        }
+    }
       
-    private double getTotalFees(List<Transaction> txs) {
+    private double getTotalFees(List<TxWithValue> txs) {
         return txs.stream()
-                .mapToDouble(tx -> transactionFee(tx))
+                .mapToDouble(tx -> tx.txValue)
                 .sum();
     }
     
@@ -197,11 +211,11 @@ public class MaxFeeTxHandler {
                 .allMatch(o -> o.value>=0); //check if value non-nagtive
     }
 
-    private double transactionFee(Transaction tx) {
+    private double transactionFee(Transaction tx, UTXOPool ledger) {
         // (5) the sum of {@code tx}s input values is greater than or equal to the sum of its output
         // sum all the inputSum
         double inputSum = tx.getInputs().stream()
-                .mapToDouble(inp -> publicLedger.getTxOutput(new UTXO(inp.prevTxHash,inp.outputIndex)).value)
+                .mapToDouble(inp -> ledger.getTxOutput(new UTXO(inp.prevTxHash,inp.outputIndex)).value)
                 .sum();
         double outputSum = tx.getOutputs().stream()
                 .mapToDouble(o -> o.value)
@@ -231,9 +245,9 @@ public class MaxFeeTxHandler {
 //        return tx2;
 //    }
 
-    private ArrayList<Transaction> removeConflictingTxs(Transaction tx, ArrayList<Transaction> selectedTxs) {
+    private ArrayList<TxWithValue> removeConflictingTxs(Transaction tx, ArrayList<TxWithValue> selectedTxs) {
         //make defensive copy of selectedTxs
-        ArrayList<Transaction> modTxs = new ArrayList<>(selectedTxs);
+        ArrayList<TxWithValue> modTxs = new ArrayList<>(selectedTxs);
         
         //go through all inputs in tx
         for(Transaction.Input inp:tx.getInputs()) {
@@ -241,7 +255,7 @@ public class MaxFeeTxHandler {
             //find if input also exists in any selcted tx
             int foundIdx = -1;
             for(int idx =0; idx < modTxs.size(); idx++) {
-                Transaction cur = modTxs.get(idx);
+                Transaction cur = modTxs.get(idx).tx;
                 for(Transaction.Input nestedInp:cur.getInputs()) {
                     if(curInp.compareTo(new UTXO(nestedInp.prevTxHash,nestedInp.outputIndex)) == 0) {
                         foundIdx = idx;
@@ -259,11 +273,11 @@ public class MaxFeeTxHandler {
         return modTxs;
     }
 
-    private UTXOPool recalculateLedger(ArrayList<Transaction> selectedTxs) {
+    private UTXOPool recalculateLedger(ArrayList<TxWithValue> selectedTxs) {
         //recalculate ledger from publicLedger
         //make defensive copy of public ledger
         UTXOPool currentLedger = new UTXOPool(publicLedger);
-        selectedTxs.forEach(tx -> updateCurrentPoolLedger(tx,currentLedger));
+        selectedTxs.forEach(txV -> updateCurrentPoolLedger(txV.tx,currentLedger));
         return currentLedger;
     }
 
